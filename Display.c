@@ -6,51 +6,53 @@
 #include "hardware/clocks.h"
 #include "hardware/pio.h"
 #include "Display.pio.h"
-#include "inc/ssd1306.h"
-#include "inc/font.h"
+#include "inc/ssd1306.h" // Biblioteca para o display SSD1306
+#include "inc/font.h"    // Biblioteca para fontes
 #include <stdbool.h>
 
 
-#define INIT_GPIO_H
-#define BTN_A 5
-#define BTN_B 6
-#define BTN_STICK 22
-#define LED_RED 13
-#define LED_GREEN 11
-#define LED_BLUE 12
-#define BUZZER 21
-#define I2C_PORT i2c1
-#define I2C_SDA 14
-#define I2C_SCL 15
-#define endereco 0x3C
+// Definições de pinos e constantes
+#define BTN_A 5          // Pino do botão A
+#define BTN_B 6          // Pino do botão B
+#define BTN_STICK 22     // Pino do botão STICK
+#define LED_RED 13       // Pino do LED vermelho
+#define LED_GREEN 11     // Pino do LED verde
+#define LED_BLUE 12      // Pino do LED azul
+#define BUZZER 21        // Pino do buzzer
+#define I2C_PORT i2c1    // Porta I2C usada para o display
+#define I2C_SDA 14       // Pino SDA do I2C
+#define I2C_SCL 15       // Pino SCL do I2C
+#define endereco 0x3C    // Endereço I2C do display SSD1306
 ssd1306_t ssd;
-bool cor = true;
+
+// Variável para o display
+ssd1306_t ssd;
+bool cor = true;         // Variável para controle de cor do display
+
+// Definições para a matriz de LEDs WS2812B
+#define NUM_PIXELS 25    // Número de LEDs na matriz
+#define OUT_PIN 7        // Pino de saída da matriz
+uint32_t valor_led;      // Variável para controle do valor do LED
+double r = 0.0, b = 0.0, g = 0.0; // Variáveis para valores de cor
+PIO pio = pio0;          // PIO usado para controlar a matriz
+uint offset;             // Offset para o programa PIO
+uint sm;                 // State machine do PIO
 
 
-#define NUM_PIXELS 25
-// pino de saída da matriz(ws2812) da placa
-#define OUT_PIN 7
-// variaveis para inciar a matriz
-uint32_t valor_led;
-double r = 0.0, b = 0.0, g = 0.0;
-PIO pio = pio0;
-uint offset;
-uint sm;
+// Debounce para botões
+#define DEBOUNCE_TIME 200000 // Tempo de debounce em microssegundos
+uint32_t last_time = 0;      // Último tempo de acionamento para debounce
+bool verde_on = 0;           // Estado do LED verde (ligado/desligado)
 
-
-#define DEBOUNCE_TIME 200000 // 200ms em us de debounce
-uint32_t last_time = 0;      // captura o tempo do ultimo acionamento do botão para o debounce
-bool verde_on = 0;           // verifica qual led está ligado, 1 -> VERDE, 0 -> AZUL
-
+// Inicializa a matriz de LEDs usando PIO
 void init_pio_matriz()
 {
-  // Configuração da PIO, necessario para matriz
-  offset = pio_add_program(pio, &Display_program);
-  sm = pio_claim_unused_sm(pio, true);
-  Display_program_init(pio, sm, offset, OUT_PIN);
+    offset = pio_add_program(pio, &Display_program); // Adiciona o programa PIO
+    sm = pio_claim_unused_sm(pio, true);             // Obtém uma state machine disponível
+    Display_program_init(pio, sm, offset, OUT_PIN);  // Inicializa o programa PIO
 }
 
-
+// Padrões de números para a matriz de LEDs
 double apagar_leds[NUM_PIXELS] =
     {0.0, 0.0, 0.0, 0.0, 0.0,
      0.0, 0.0, 0.0, 0.0, 0.0,
@@ -118,17 +120,17 @@ double num_9[NUM_PIXELS] =
      0.35, 0.0, 0.0, 0.0, 0.0,
      0.0, 0.35, 0.35, 0.35, 0.35};
 
-// rotina para definição da intensidade de cores do led
+// Converte valores de cor para o formato WS2812B
 uint32_t matrix_rgb(double b, double r, double g)
 {
   unsigned char R, G, B;
   R = r * 255;
   G = g * 255;
   B = b * 255;
-  return (G << 24) | (R << 16) | (B << 8);
+  return (G << 24) | (R << 16) | (B << 8); // Retorna o valor de cor no formato esperado
 }
 
-// rotinas para acionar a matrix de leds - ws2812b
+// Aciona a matriz de LEDs com um padrão específico
 void liga_matriz(double *desenho, uint32_t valor_led, PIO pio, uint sm, double r, double g, double b)
 {
  for (int16_t i = 0; i < NUM_PIXELS; i++)
@@ -138,7 +140,7 @@ void liga_matriz(double *desenho, uint32_t valor_led, PIO pio, uint sm, double r
     pio_sm_put_blocking(pio, sm, valor_led);
   }
 }
-
+// Inicializa os GPIOs para botões, LEDs e buzzer
 void init_gpio()
 {
     gpio_init(BTN_A);
@@ -164,25 +166,26 @@ void init_gpio()
     gpio_set_dir(BUZZER, GPIO_OUT);
 }
 
-
+// Inicializa o display SSD1306
 void init_i2c()
 {
-    // I2C Initialisation. Using it at 400Khz.
+    // Inicializa o I2C a 400 kHz
     i2c_init(I2C_PORT, 400 * 1000);
 
-    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C);                    // Set the GPIO pin function to I2C
-    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C);                    // Set the GPIO pin function to I2C
-    gpio_pull_up(I2C_SDA);                                        // Pull up the data line
-    gpio_pull_up(I2C_SCL);                                        // Pull up the clock line
+    gpio_set_function(I2C_SDA, GPIO_FUNC_I2C); // Configura o pino SDA
+    gpio_set_function(I2C_SCL, GPIO_FUNC_I2C); // Configura o pino SCL
+    gpio_pull_up(I2C_SDA);                     // Pull-up no pino SDA
+    gpio_pull_up(I2C_SCL);                     // Pull-up no pino SCL
+
     ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT); // Inicializa o display
     ssd1306_config(&ssd);                                         // Configura o display
     ssd1306_send_data(&ssd);                                      // Envia os dados para o display
 
-    // Limpa o display. O display inicia com todos os pixels LIGADOS.
-    ssd1306_fill(&ssd, true);
-    ssd1306_send_data(&ssd);
+    ssd1306_fill(&ssd, true);   // Limpa o display (todos os pixels ligados)
+    ssd1306_send_data(&ssd);    // Envia os dados para o display
 }
 
+// Desenha um caractere no display
 void desenha_caractere(char c) // atualiza o display com o caractere inserido pelo usuario
 {
     ssd1306_fill(&ssd, cor);
@@ -191,8 +194,8 @@ void desenha_caractere(char c) // atualiza o display com o caractere inserido pe
     ssd1306_draw_string(&ssd, &c, 63, 30);
     ssd1306_send_data(&ssd);
 }
-
-void resposta(bool led, bool verde) //trata o acionamento dos botoes, verificando estado e cor dos leds
+// Trata o acionamento dos botões (alterna LEDs e atualiza o display)
+void resposta(bool led, bool verde) 
 {
     if (verde)
     {
@@ -242,25 +245,40 @@ void resposta(bool led, bool verde) //trata o acionamento dos botoes, verificand
     }
 }
 
-// Função de interrupção para todos os botões
+// Função de callback para interrupções dos botões
 void btns_callback(uint gpio, uint32_t events)
 {
-    uint32_t current_time = to_us_since_boot(get_absolute_time()); // captura o momento do acionamento e converte para microsegundos
-    if (current_time - last_time > DEBOUNCE_TIME)    // Verifica se ja passou o tempo do debounce para acionamento novamente do botao
+    // Captura o momento atual desde o início do boot e converte para microssegundos
+    uint32_t current_time = to_us_since_boot(get_absolute_time());
+
+    // Verifica se o tempo desde o último acionamento é maior que o tempo de debounce
+    if (current_time - last_time > DEBOUNCE_TIME)
     {
+        // Verifica qual botão foi pressionado
         if (gpio == BTN_A)
         {
-            resposta(!gpio_get(LED_GREEN), verde_on = true); //func para acionar o led VERDE, imprimir no terminal e atualizar o display
+            // Se o botão A for pressionado:
+            // - Alterna o estado do LED verde (!gpio_get(LED_GREEN))
+            // - Atualiza o display e o terminal (verde_on = true)
+            resposta(!gpio_get(LED_GREEN), verde_on = true);
         }
         else if (gpio == BTN_B)
         {
-            resposta(!gpio_get(LED_BLUE), verde_on = false); //func para acionar o led AZUL, imprimir no terminal e atualizar o display
+            // Se o botão B for pressionado:
+            // - Alterna o estado do LED azul (!gpio_get(LED_BLUE))
+            // - Atualiza o display e o terminal (verde_on = false)
+            resposta(!gpio_get(LED_BLUE), verde_on = false);
         }
         else if (gpio == BTN_STICK)
         {
-            reset_usb_boot(0, 0); //func para entrar no modo bootsel 
+            // Se o botão STICK for pressionado:
+            // - Entra no modo BOOTSEL para reprogramação do microcontrolador via USB
+            reset_usb_boot(0, 0);
         }
-        last_time = current_time; // Atualiza o tempo para o debounce
+
+        // Atualiza o tempo do último acionamento para o momento atual
+        // Isso garante que o próximo acionamento só será tratado após o tempo de debounce
+        last_time = current_time;
     }
 }
 
